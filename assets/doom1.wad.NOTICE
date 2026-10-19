@@ -1,0 +1,15 @@
+doom1.wad — DOOM shareware WAD, version 1.9 (id Software).
+
+MD5:   f0cefca49926d00903cf57551d901abe
+SHA-1: 5b2e249b9c5133ec987b3ea77596381dc0d6bc1d
+Size:  4196020 bytes
+
+Identified by md5 against the canonical v1.9 shareware hash used by
+chocolate-doom/doomgeneric's d_iwad.c. Extracted from the idgames
+doom19s.zip self-extracting archive (DOOMS_19.1 + DOOMS_19.2 concat).
+
+Distribution terms: the shareware DOOM data file is freely
+redistributable per id Software's shareware license terms (see
+DOOMS_19.TXT inside the source archive). It is NOT GPL; it travels
+with this repo solely as the M130 host-leg fixture and eventual store
+payload asset.
