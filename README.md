@@ -42,8 +42,23 @@ The engine is [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)
   `space`/`ctrl-x`/`left` chords, and pixel-asserts the HUD + a scene
   delta on raw scanout snapshots.
 
-Still stubbed: audio is a no-op until M130d (`FEATURE_SOUND` off),
-store packaging is M130e.
+## What M130d adds (sound)
+
+- `virelai/vl_sound.c` — the `DG_*` sound modules on `sys_audio`:
+  `DG_sound_module` decodes DMX PCM lumps (8-byte header + unsigned
+  8-bit mono), mixes the 8 channels in software with left/right
+  separation, resamples 11025 Hz source to the negotiated rate, and
+  streams bounded 4 KiB periods through the slot-43 bit-63 stream ABI
+  (`virelai/sys.h` `vl_audio_stream_*`). `DG_music_module` refuses by
+  name (`vldoom: music unsupported`) — no synthesizer exists here.
+- New markers: `vldoom: snd` (negotiated tuple + seat generation or the
+  named refusal), `vldoom: sfx` (one line per decoded lump bound to a
+  channel), `vldoom: pcm` (throttled submitted/nonzero/completed/underrun
+  counters from the seat's status call).
+- Host leg 4 drives the module against the mock stream and asserts
+  whole-period submissions.
+
+Store packaging is M130e.
 
 ## Build
 
@@ -59,7 +74,7 @@ make test          # everything
 | path                     | contents                                        |
 |--------------------------|-------------------------------------------------|
 | `doomgeneric/`           | upstream engine, unmodified (GPLv2)             |
-| `virelai/`               | shim: `sys.*`, `sys_guest.S`, `doomgeneric_virelai.c`, `start.S`, `virelai.ld`, `libc/`, `include/` |
+| `virelai/`               | shim: `sys.*`, `sys_guest.S`, `doomgeneric_virelai.c`, `vl_sound.c`, `start.S`, `virelai.ld`, `libc/`, `include/` |
 | `virelai/sys_mock.c`, `virelai/darwin_syscall.S` | mock kernel for host legs — never in DOOM.ELF   |
 | `tools/`                 | `hosttest.c`, `check-elf.py`                    |
 | `assets/`                | WAD test assets + notices                       |

@@ -53,21 +53,22 @@ enum {
     VL_SYS_GETRANDOM    = 72,  /* getrandom(buf, len) → ≤256               */
 };
 
-/* Error magnitudes the ABI reports (x0 = -errno). */
+/* Error magnitudes the ABI reports (x0 = -errno) — the kernel's own
+ * ordering (ADR 0007 D3), NOT Linux's: EINVAL is 1 here, EAGAIN is 11. */
 enum {
-    VL_EPERM    = 1,
-    VL_ENOENT   = 2,
+    VL_EINVAL   = 1,
+    VL_EBADF    = 2,
     VL_EFAULT   = 3,
-    VL_EBADF    = 4,
+    VL_ENOSYS   = 4,
     VL_ENOSPC   = 5,
+    VL_ENOENT   = 6,
     VL_EACCES   = 7,
-    VL_EEXIST   = 9,
+    VL_ENAMETOOLONG = 8,
+    VL_ENXIO    = 9,
     VL_ENOMEM   = 10,
-    VL_EINVAL   = 11,
-    VL_ENAMETOOLONG = 14,
-    VL_EAGAIN   = 16,
-    VL_ENXIO    = 19,
-    VL_ENOSYS   = 38,
+    VL_EAGAIN   = 11,
+    VL_ETIMEDOUT = 12,
+    VL_EIO      = 13,
 };
 
 /* mmap protection bits. */
@@ -146,6 +147,78 @@ typedef struct vl_audio_info {
     uint32_t max_len;
 } vl_audio_info_t;
 
+/* Negotiated format/rate codes the kernel reports — the FMT_* and
+ * RATE_* bit positions from the virtio-snd PCM_INFO bitmap. */
+enum {
+    VL_AFMT_S16   = 5,
+    VL_AFMT_S32   = 17,
+    VL_AFMT_FLOAT = 19,
+    VL_AFMT_NONE  = 0xff,
+};
+
+enum {
+    VL_ARATE_8000  = 1,
+    VL_ARATE_16000 = 3,
+    VL_ARATE_22050 = 4,
+    VL_ARATE_32000 = 5,
+    VL_ARATE_44100 = 6,
+    VL_ARATE_48000 = 7,
+};
+
+/*
+ * sys_audio_play's second form: bit 63 of the length word opts into the
+ * kernel mixer's stream ABI. Each OPEN takes a bounded per-process source
+ * seat (4 seats, 4 queued periods of period_bytes each); START joins the
+ * seat's queue to the mix; SUBMIT copies one period in (EAGAIN when the
+ * seat's queue is full); END drains and frees; ABORT frees at once; a dead
+ * owner's seat is reaped kernel-side. STATUS reports the 104-byte
+ * per-source counters below.
+ */
+#define VL_ASTREAM_FLAG   (1ULL << 63)
+
+enum {
+    VL_ASTREAM_OPEN   = 1,
+    VL_ASTREAM_SUBMIT = 2,
+    VL_ASTREAM_START  = 3,
+    VL_ASTREAM_END    = 4,
+    VL_ASTREAM_ABORT  = 5,
+    VL_ASTREAM_STATUS = 6,
+};
+
+/* OPEN's 8-byte argument: the tuple the caller wants, which must equal
+ * what audio_info reported once the shared stream is running. */
+typedef struct vl_astream_params {
+    uint8_t  format;
+    uint8_t  rate;
+    uint8_t  channels;
+    uint8_t  reserved;
+    uint32_t version;   /* 1 */
+} vl_astream_params_t;
+
+/* STATUS's 104-byte per-source counters. Accepted/Submitted/Completed/
+ * Canceled/Underruns count THIS seat's bytes through the mix; the rest are
+ * mixer-wide or shared-stream lifecycle counts. */
+typedef struct vl_astream_status {
+    uint64_t generation;
+    uint64_t accepted;
+    uint64_t submitted;
+    uint64_t completed;
+    uint64_t canceled;
+    uint64_t underruns;
+    uint64_t clipped;
+    uint32_t state;
+    uint32_t reason;
+    uint32_t outstanding;
+    uint32_t slots;
+    uint32_t sources;
+    uint32_t peak_sources;
+    uint32_t refused;
+    uint32_t starts;
+    uint32_t stops;
+    uint32_t releases;
+    uint32_t resets;
+} vl_astream_status_t;
+
 /* ------------------------------------------------------------------ */
 /* Semantic wrappers — one C translation unit, both backends.          */
 /* ------------------------------------------------------------------ */
@@ -170,6 +243,11 @@ int64_t  vl_timer_set(uint64_t delay_ticks);
 int64_t  vl_timer_cancel(void);
 int64_t  vl_audio_info(vl_audio_info_t *out);
 int64_t  vl_audio_play(const void *pcm, uint64_t len);
+int64_t  vl_audio_stream_open(uint8_t format, uint8_t rate, uint8_t ch);
+int64_t  vl_audio_stream_submit(uint64_t gen, const void *pcm,
+                                uint64_t len);
+int64_t  vl_audio_stream_ctl(uint64_t gen, uint64_t op);
+int64_t  vl_audio_stream_status(uint64_t gen, vl_astream_status_t *out);
 void    *vl_mmap(uint64_t addr_hint, uint64_t len, uint32_t prot,
                  uint32_t flags);
 int64_t  vl_munmap(void *addr, uint64_t len);
