@@ -36,7 +36,15 @@ GUEST_EXTRA := $(BUILD)/guest/doomgeneric_virelai.o \
                $(BUILD)/guest/sys_guest.o \
                $(BUILD)/guest/start.o
 
+# reserve-x18: the guest kernel's exception frame does not preserve x18
+# (platform-reserved under the VirelaiOS EL0 ABI, same as Darwin) — an IRQ
+# inside a loop that keeps a pointer there (observed: wipe_initMelt's melt
+# transform, `ldrh [x18, ...]`, far=0x8d641d7e) returns with a kernel
+# value in the register and the next deref dies. -ffixed-x18 does not
+# reach zig cc's freestanding subtarget; the target-feature does. Harmless
+# on the Darwin host legs, which already reserve x18.
 CFLAGS_COMMON := -O2 -ffreestanding -fno-stack-protector \
+    -Xclang -target-feature -Xclang +reserve-x18 \
     -I$(VIR)/include -I$(DGDIR) -I$(VIR) \
     -Wall -Wno-unused-parameter -Wno-sign-compare -Wno-pointer-sign \
     -Wno-macro-redefined

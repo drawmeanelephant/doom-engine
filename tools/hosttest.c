@@ -22,6 +22,7 @@
 #include "w_wad.h"
 #include "v_patch.h"
 #include "z_zone.h"
+#include "doomstat.h"
 
 /* mock test surface (sys_mock.c) */
 int      mock_window_count(void);
@@ -259,6 +260,34 @@ static void leg_sound(void)
     printf("leg4 sound module: OK\n");
 }
 
+/* ---------------- leg 5: live game — TITLEPIC -> demo melt ---------- */
+/*
+ * Guest bug: DOOM.ELF took a data abort inside wipe_initMelt's melt
+ * transform during the TITLEPIC->demo1 wipe (the -warp path never
+ * runs the melt). Drive the real game loop through the transition on
+ * the mock: TITLEPIC pages for 170 tics (~5 s), demo1 spawns, and the
+ * wipe melts between the two captured screens.
+ */
+static void leg_game(void)
+{
+    extern int leveltime;
+    extern gamestate_t gamestate;
+
+    char *argv[] = { "doom", "-iwad", "assets/doom1.wad", NULL };
+    doomgeneric_Create(3, argv);
+
+    int saw_level = 0;
+    /* 2000 ticks x ~5 ms of work+sleep comfortably clears 170 tics of
+     * TITLEPIC, the ~2 s melt, and the first demo tics. */
+    for (int i = 0; i < 2000 && !saw_level; i++) {
+        doomgeneric_Tick();
+        DG_SleepMs(1);
+        if (gamestate == GS_LEVEL && leveltime > 0) saw_level = 1;
+    }
+    CHECK(saw_level, "demo1 reached GS_LEVEL past the melt");
+    printf("leg5 TITLEPIC->demo melt: leveltime=%d\n", leveltime);
+}
+
 /* ---------------- entry --------------------------------------------- */
 
 int hosttest_main(int argc, char **argv)
@@ -270,6 +299,7 @@ int hosttest_main(int argc, char **argv)
     leg_wad();
     leg_titlepic();
     leg_sound();
+    leg_game();
 
     printf("hosttest: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
