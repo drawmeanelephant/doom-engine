@@ -10,7 +10,10 @@
  *                        mock timebase on host
  *   DG_SleepMs         — counter busy-wait (sys_sleep ticks are 1 s)
  *   DG_SetWindowTitle  — win_set_title
- *   PCM submit         — vl_audio_play wrapper, unbound until M130d
+ *   PCM submit         — vl_audio_play wrapper; the M130d sound module
+ *                        (virelai/vl_sound.c) uses the slot-43 stream ABI
+ *                        (vl_audio_stream_* in sys.h), not this legacy
+ *                        blast path
  *
  * M130c: the in-guest run is choreographed by serial markers printed from
  * this file (vldoom: boot / win / level / key / f=N t=T), so a host-side
@@ -153,6 +156,12 @@ static unsigned char vl_hid_to_doom(unsigned int usage, unsigned int flags)
     case 0xe3: case 0xe7: return 0x80 + 0x5b;  /* GUI/CMD — unbound  */
     default: break;
     }
+    /* 'f' is a second fire binding: DOOM attacks while the fire key is
+     * held, and the gate's --input-key can hold a letter usage down (it
+     * cannot hold a ctrl chord), so this gives scripted input a
+     * deterministic held fire. 'f' is unbound in vanilla gameplay. */
+    if (usage == 0x09) return KEY_FIRE;
+
     /* WASD movement aliases (ahead of the letter fallthrough). */
     if (usage == 0x1a) return KEY_UPARROW;        /* w */
     if (usage == 0x16) return KEY_DOWNARROW;      /* s */
@@ -277,7 +286,8 @@ void DG_SetWindowTitle(const char *title)
 }
 
 /* ------------------------------------------------------------------ */
-/* PCM seam — the submit stub M130d fills with a sound module          */
+/* PCM seam — legacy submit wrappers; the sound module lives in         */
+/* virelai/vl_sound.c on the stream ABI                                 */
 /* ------------------------------------------------------------------ */
 
 /* Query the negotiated playback shape; returns 0 or negative errno. */
@@ -286,8 +296,8 @@ int64_t vl_audio_query(vl_audio_info_t *out)
     return vl_audio_info(out);
 }
 
-/* Submit one bounded PCM period; returns bytes accepted or <0. Unused
- * until a sound module lands (FEATURE_SOUND, M130d). */
+/* Submit one bounded PCM blast; returns bytes accepted or <0. The M130d
+ * module streams through vl_audio_stream_submit instead. */
 int64_t vl_audio_submit(const void *pcm, uint64_t len)
 {
     return vl_audio_play(pcm, len);

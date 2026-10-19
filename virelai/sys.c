@@ -114,6 +114,36 @@ int64_t vl_audio_play(const void *pcm, uint64_t len)
                   0, 0, 0, 0);
 }
 
+int64_t vl_audio_stream_open(uint8_t format, uint8_t rate, uint8_t ch)
+{
+    vl_astream_params_t p;
+    p.format = format;
+    p.rate = rate;
+    p.channels = ch;
+    p.reserved = 0;
+    p.version = 1;
+    return vl_sys(VL_SYS_AUDIO_PLAY, (uint64_t)(uintptr_t)&p,
+                  VL_ASTREAM_FLAG | sizeof(p), VL_ASTREAM_OPEN, 0, 0, 0);
+}
+
+int64_t vl_audio_stream_submit(uint64_t gen, const void *pcm, uint64_t len)
+{
+    return vl_sys(VL_SYS_AUDIO_PLAY, (uint64_t)(uintptr_t)pcm,
+                  VL_ASTREAM_FLAG | len, VL_ASTREAM_SUBMIT, gen, 0, 0);
+}
+
+int64_t vl_audio_stream_ctl(uint64_t gen, uint64_t op)
+{
+    return vl_sys(VL_SYS_AUDIO_PLAY, 0, VL_ASTREAM_FLAG, op, gen, 0, 0);
+}
+
+int64_t vl_audio_stream_status(uint64_t gen, vl_astream_status_t *out)
+{
+    return vl_sys(VL_SYS_AUDIO_PLAY, (uint64_t)(uintptr_t)out,
+                  VL_ASTREAM_FLAG | sizeof(*out), VL_ASTREAM_STATUS, gen,
+                  0, 0);
+}
+
 void *vl_mmap(uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags)
 {
     int64_t r = vl_sys(VL_SYS_MMAP, addr_hint, len, prot, flags, 0, 0);

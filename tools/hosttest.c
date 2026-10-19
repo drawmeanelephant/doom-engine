@@ -17,6 +17,8 @@
 #include "../virelai/sys.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
+#include "i_sound.h"
+#include "sounds.h"
 #include "w_wad.h"
 #include "v_patch.h"
 #include "z_zone.h"
@@ -103,6 +105,11 @@ static void leg_shim(void)
           key == KEY_FIRE, "ctrl-x is KEY_FIRE");
     CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 0 &&
           key == KEY_FIRE, "ctrl-x up is KEY_FIRE");
+    /* M130d: held 'f' is the second fire binding (a gate's --input-key
+     * can hold a letter usage; it cannot hold a ctrl chord) */
+    mock_push_event(VL_EV_KEY_DOWN, 0, 0x09, 'f');
+    CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 1 &&
+          key == KEY_FIRE, "f is KEY_FIRE");
     CHECK(DG_GetKey(&pressed, &key) == 0, "queue drained");
 
     /* ticks monotonic; sleep actually waits */
@@ -222,6 +229,36 @@ static void leg_titlepic(void)
            palbytes ? "present" : "missing");
 }
 
+/* ---------------- leg 4: M130d sound module on the mock ------------- */
+
+static void leg_sound(void)
+{
+    /* leg_wad already Z_Init'd and W_AddFile'd doom1.wad. */
+    CHECK(DG_sound_module.Init(true) == true, "sound module init");
+    if (!DG_sound_module.Init) return;
+
+    sfxinfo_t *sfx = &S_sfx[sfx_pistol];
+    sfx->lumpnum = -1;
+    sfx->lumpnum = DG_sound_module.GetSfxLumpNum(sfx);
+    CHECK(sfx->lumpnum >= 0, "dspistol lump resolves");
+
+    uint64_t before = mock_audio_bytes();
+    int h = DG_sound_module.StartSound(sfx, 0, 127, 127);
+    CHECK(h >= 0, "StartSound accepted the channel");
+    CHECK(DG_sound_module.SoundIsPlaying(h) == true, "channel playing");
+
+    /* a few tics of Update() must submit bounded periods to the mock */
+    for (int i = 0; i < 8; i++) DG_sound_module.Update();
+    CHECK(mock_audio_bytes() > before, "pcm submitted through stream ABI");
+    CHECK((mock_audio_bytes() - before) % 4096 == 0,
+          "submissions are whole 4096-B periods");
+
+    DG_sound_module.StopSound(h);
+    CHECK(DG_sound_module.SoundIsPlaying(h) == false, "channel stopped");
+    DG_sound_module.Shutdown();
+    printf("leg4 sound module: OK\n");
+}
+
 /* ---------------- entry --------------------------------------------- */
 
 int hosttest_main(int argc, char **argv)
@@ -232,6 +269,7 @@ int hosttest_main(int argc, char **argv)
     leg_shim();
     leg_wad();
     leg_titlepic();
+    leg_sound();
 
     printf("hosttest: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;

@@ -235,6 +235,40 @@ int64_t vl_sys(int64_t num, uint64_t a0, uint64_t a1, uint64_t a2,
         return 0;
     }
     case VL_SYS_AUDIO_PLAY: {
+        if (a1 & VL_ASTREAM_FLAG) {
+            uint64_t len = a1 & ~VL_ASTREAM_FLAG;
+            switch (a2) {
+            case VL_ASTREAM_OPEN: {
+                if (len != sizeof(vl_astream_params_t) || a3) return -VL_EINVAL;
+                return 1;   /* one fake seat, generation 1 */
+            }
+            case VL_ASTREAM_SUBMIT: {
+                if (!len || len > 4096) return -VL_EINVAL;
+                mock_audio_played += len;
+                return (int64_t)len;
+            }
+            case VL_ASTREAM_START:
+            case VL_ASTREAM_END:
+            case VL_ASTREAM_ABORT:
+                return 0;
+            case VL_ASTREAM_STATUS: {
+                if (len != sizeof(vl_astream_status_t)) return -VL_EINVAL;
+                vl_astream_status_t *s =
+                    (vl_astream_status_t *)(uintptr_t)a0;
+                memset(s, 0, sizeof(*s));
+                s->generation = a3;
+                s->accepted = mock_audio_played;
+                s->submitted = mock_audio_played;
+                s->completed = mock_audio_played;
+                s->slots = 4;
+                s->sources = 1;
+                s->peak_sources = 1;
+                return 0;
+            }
+            default:
+                return -VL_EINVAL;
+            }
+        }
         if (!a1 || a1 > VL_AUDIO_PLAY_MAX) return -VL_EINVAL;
         mock_audio_played += a1;
         return (int64_t)a1;
