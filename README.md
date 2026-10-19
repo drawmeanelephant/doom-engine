@@ -58,7 +58,25 @@ The engine is [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)
 - Host leg 4 drives the module against the mock stream and asserts
   whole-period submissions.
 
-Store packaging is M130e.
+## What M130e adds (store packaging)
+
+- `tools/release.py` — signs and packages the `doom` release stream
+  under the engine repo's own publisher key (`release/publisher.seed`,
+  pinned `name=doom` in the consumer's `TRUSTED.TXT`). It reimplements
+  the FLINT release-stream wire facts (canonical atoms, the ops hash,
+  the Change signature preimage) and RFC 8032 Ed25519 in pure Python —
+  nothing from VirelaiOS is copied or linked; `--selftest` pins the
+  signing math against the RFC vector and the atom hashing against the
+  consumer's own recorded atom.
+- `make release` → `build/release/`: the signed `doom-stream.jsonl`
+  Change + `doom-stream.json` record, the `release.go` manifest,
+  `publisher.pub` (the `name=doom` keyring pin), and the channel drop
+  `channel/doom/{release.go,DOOM.ELF,doom1.wad,LICENSE}`.
+- The manifest carries the ADR 0055 catalog consts, ADR 0054 D10's
+  `ReleaseCaps=file,window,audio,timer,memory`, and ADR 0058 D6's
+  `ReleaseAssetSHA256` pinning `doom1.wad` + `LICENSE` as channel
+  members — the GPL text travels inside the signed channel, never into
+  the system repo.
 
 ## Build
 
@@ -66,6 +84,7 @@ Store packaging is M130e.
 make doom.elf      # build/DOOM.ELF (zig cc required)
 make check-elf     # contract check
 make host-test     # host legs (clang + Darwin; builds build/hosttest)
+make release       # build/release/ — signed stream + channel drop
 make test          # everything
 ```
 
@@ -76,5 +95,6 @@ make test          # everything
 | `doomgeneric/`           | upstream engine, unmodified (GPLv2)             |
 | `virelai/`               | shim: `sys.*`, `sys_guest.S`, `doomgeneric_virelai.c`, `vl_sound.c`, `start.S`, `virelai.ld`, `libc/`, `include/` |
 | `virelai/sys_mock.c`, `virelai/darwin_syscall.S` | mock kernel for host legs — never in DOOM.ELF   |
-| `tools/`                 | `hosttest.c`, `check-elf.py`                    |
+| `tools/`                 | `hosttest.c`, `check-elf.py`, `release.py`      |
+| `release/`               | `publisher.seed` — the `name=doom` publisher key |
 | `assets/`                | WAD test assets + notices                       |
