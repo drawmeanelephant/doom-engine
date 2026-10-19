@@ -16,6 +16,7 @@
 
 #include "../virelai/sys.h"
 #include "doomgeneric.h"
+#include "doomkeys.h"
 #include "w_wad.h"
 #include "v_patch.h"
 #include "z_zone.h"
@@ -85,6 +86,23 @@ static void leg_shim(void)
           "key down delivered");
     CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 0 && key == 'e',
           "key up delivered");
+    CHECK(DG_GetKey(&pressed, &key) == 0, "queue drained");
+
+    /* M130c control mappings: WASD are movement aliases, space = use,
+     * ctrl-modified stroke = fire (modifier-only presses never arrive
+     * as usages on the guest channel). */
+    mock_push_event(VL_EV_KEY_DOWN, 0, 0x1a, 'w');
+    mock_push_event(VL_EV_KEY_DOWN, 0, 0x2c, ' ');
+    mock_push_event(VL_EV_KEY_DOWN, VL_MOD_CTRL, 0x1b, 'x');
+    mock_push_event(VL_EV_KEY_UP,   VL_MOD_CTRL, 0x1b, 'x');
+    CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 1 &&
+          key == KEY_UPARROW, "w is KEY_UPARROW");
+    CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 1 &&
+          key == KEY_USE, "space is KEY_USE");
+    CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 1 &&
+          key == KEY_FIRE, "ctrl-x is KEY_FIRE");
+    CHECK(DG_GetKey(&pressed, &key) == 1 && pressed == 0 &&
+          key == KEY_FIRE, "ctrl-x up is KEY_FIRE");
     CHECK(DG_GetKey(&pressed, &key) == 0, "queue drained");
 
     /* ticks monotonic; sleep actually waits */

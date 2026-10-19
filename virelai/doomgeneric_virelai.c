@@ -11,6 +11,11 @@
  *   DG_SleepMs         — counter busy-wait (sys_sleep ticks are 1 s)
  *   DG_SetWindowTitle  — win_set_title
  *   PCM submit         — vl_audio_play wrapper, unbound until M130d
+ *
+ * M130c: the in-guest run is choreographed by serial markers printed from
+ * this file (vldoom: boot / win / level / key / f=N t=T), so a host-side
+ * driver can anchor input injection and framebuffer snapshots without a
+ * display round trip.
  */
 
 #include <stdint.h>
@@ -21,12 +26,14 @@
 #include "sys.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
+#include "doomstat.h"   /* gamestate, leveltime */
 
 #define VL_WIN_W 640
 #define VL_WIN_H 400
 
 static uint32_t win_id;
 static int      quit_requested;
+static unsigned char held_code[256]; /* HID usage -> doom code emitted at key-down */
 
 /* ------------------------------------------------------------------ */
 /* timebase                                                            */
@@ -78,15 +85,30 @@ void DG_SleepMs(uint32_t ms)
 /* keys                                                                */
 /* ------------------------------------------------------------------ */
 
-/* HID boot-protocol usage -> doomkeys.h code. 0 = unmapped. */
-static unsigned char vl_hid_to_doom(unsigned int usage)
+/* HID boot-protocol usage + modifier flags -> doomkeys.h code.
+ * 0 = unmapped.
+ *
+ * VirelaiOS keyboard events carry the HID boot-report modifier byte as
+ * event flags and report usages in arg0 — a bare Ctrl press never appears
+ * as a usage, so DOOM's fire key (bound to KEY_FIRE by default) can only
+ * be reached through a ctrl-modified stroke. Upstream ports map a real
+ * Ctrl keypress to KEY_FIRE at this same layer (doomgeneric_sdl.c); here
+ * any ctrl-flagged event is the fire key. Likewise Space is the use key
+ * (KEY_USE), matching upstream — a literal ' ' reaches DOOM nowhere.
+ *
+ * WASD are bound as movement aliases for the arrows: scripted input can
+ * hold a letter key across tics, which an arrow chord cannot do on the
+ * custom-virtio input channel. */
+static unsigned char vl_hid_to_doom(unsigned int usage, unsigned int flags)
 {
+    if (flags & VL_MOD_CTRL) return KEY_FIRE;
+    if (flags & VL_MOD_ALT)  return KEY_RALT;   /* strafe modifier */
     switch (usage) {
     case 0x28: return KEY_ENTER;
     case 0x29: return KEY_ESCAPE;
     case 0x2a: return KEY_BACKSPACE;
     case 0x2b: return KEY_TAB;
-    case 0x2c: return ' ';
+    case 0x2c: return KEY_USE;              /* Space = use */
     case 0x2d: return KEY_MINUS;
     case 0x2e: return KEY_EQUALS;
     case 0x2f: return '[';
@@ -125,12 +147,17 @@ static unsigned char vl_hid_to_doom(unsigned int usage)
     case 0x51: return KEY_DOWNARROW;
     case 0x52: return KEY_UPARROW;
     case 0x53: return KEY_NUMLOCK;
-    case 0xe0: case 0xe4: return KEY_RCTRL;
+    case 0xe0: case 0xe4: return KEY_FIRE;  /* bare Ctrl if it ever lands */
     case 0xe1: case 0xe5: return KEY_RSHIFT;
     case 0xe2: case 0xe6: return KEY_RALT;
     case 0xe3: case 0xe7: return 0x80 + 0x5b;  /* GUI/CMD — unbound  */
     default: break;
     }
+    /* WASD movement aliases (ahead of the letter fallthrough). */
+    if (usage == 0x1a) return KEY_UPARROW;        /* w */
+    if (usage == 0x16) return KEY_DOWNARROW;      /* s */
+    if (usage == 0x04) return KEY_LEFTARROW;      /* a */
+    if (usage == 0x07) return KEY_RIGHTARROW;     /* d */
     if (usage >= 0x04 && usage <= 0x1d) return (unsigned char)('a' + usage - 0x04);
     if (usage >= 0x1e && usage <= 0x26) return (unsigned char)('1' + usage - 0x1e);
     if (usage == 0x27) return '0';
@@ -158,8 +185,25 @@ int DG_GetKey(int *pressed, unsigned char *key)
         switch (ev.kind) {
         case VL_EV_KEY_DOWN:
         case VL_EV_KEY_UP: {
-            unsigned char k = vl_hid_to_doom(ev.arg0);
-            if (k) keyq_push(ev.kind == VL_EV_KEY_DOWN, k);
+            /* A release report carries no modifiers (all-zero HID
+             * report), so the key-up must echo whatever code the
+             * matching key-down emitted — otherwise a ctrl-chord's
+             * release would unbind the bare letter and leave the fire
+             * key latched. */
+            unsigned char k;
+            if (ev.kind == VL_EV_KEY_DOWN) {
+                k = vl_hid_to_doom(ev.arg0, ev.flags);
+                held_code[ev.arg0 & 0xff] = k;
+            } else {
+                k = held_code[ev.arg0 & 0xff];
+                held_code[ev.arg0 & 0xff] = 0;
+            }
+            if (k) {
+                keyq_push(ev.kind == VL_EV_KEY_DOWN, k);
+                printf("vldoom: key %s hid=0x%02x doom=0x%02x\n",
+                       ev.kind == VL_EV_KEY_DOWN ? "dn" : "up",
+                       ev.arg0, k);
+            }
             break;
         }
         case VL_EV_WIN_CLOSE:
@@ -205,11 +249,26 @@ void DG_Init(void)
     DG_ScreenBuffer = (pixel_t *)surface;
 
     vl_win_set_title(win_id, "DOOM", 4);
+    printf("vldoom: win id=%u %ux%u\n", win_id, VL_WIN_W, VL_WIN_H);
 }
+
+static uint64_t frame_count;
+static int      level_seen;
 
 void DG_DrawFrame(void)
 {
     vl_win_present(win_id);
+    frame_count++;
+    if (!level_seen && gamestate == GS_LEVEL) {
+        level_seen = 1;
+        printf("vldoom: level\n");
+    }
+    /* One heartbeat per presented 35-frame second — `t=` carries leveltime
+     * (in-level tics), so a driver can see the game loop holding its tic
+     * rate, not just frames landing. */
+    if (frame_count % 35 == 0)
+        printf("vldoom: f=%llu t=%d\n",
+               (unsigned long long)frame_count, leveltime);
 }
 
 void DG_SetWindowTitle(const char *title)
@@ -249,6 +308,8 @@ void vl_entry(uint64_t argc, uint64_t argv_block)
     for (i = 0; i < n; i++)
         argv[i] = (char *)(uintptr_t)(argv_block + i * 256);
     argv[n] = NULL;
+
+    printf("vldoom: boot argc=%llu\n", (unsigned long long)argc);
 
     doomgeneric_Create((int)n, argv);
 

@@ -26,8 +26,24 @@ The engine is [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)
 - `assets/doom1.wad` — shareware DOOM 1.9 asset (see
   `assets/doom1.wad.NOTICE`), loaded by the host legs.
 
-Later cards (per the M130 arc): M130c playable slice, M130d audio,
-M130e/M130f store packaging.
+## What M130c adds (playable slice)
+
+- `vldoom:` serial markers (`boot`, `win`, `level`, `key`, `f=N t=T`) so
+  a host-side driver can anchor scripted input and framebuffer snapshots
+  without a display round trip.
+- Control mapping fixed for DOOM's abstract codes: space → `KEY_USE`,
+  any ctrl-modified stroke → `KEY_FIRE` (modifier presses never arrive
+  as HID usages on the guest channel), WASD as movement aliases.
+- Game loop runs at tic rate in-guest: `doomgeneric_Tick` presents one
+  frame per real tic; `f=N t=T` heartbeats carry `leveltime` so the gate
+  can see tics advancing.
+- `live-doom` spec leg (VirelaiOS side) execs `DOOM.ELF` off the virtio
+  share with `-iwad doom1.wad -warp 1 1`, holds `w` (forward) and sends
+  `space`/`ctrl-x`/`left` chords, and pixel-asserts the HUD + a scene
+  delta on raw scanout snapshots.
+
+Still stubbed: audio is a no-op until M130d (`FEATURE_SOUND` off),
+store packaging is M130e.
 
 ## Build
 
