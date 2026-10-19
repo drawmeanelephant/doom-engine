@@ -163,9 +163,21 @@ host-test: $(BUILD)/hosttest
 check-elf: $(BUILD)/DOOM.ELF
 	$(PYTHON) tools/check-elf.py $(BUILD)/DOOM.ELF
 
+# ---------------------------------------------------------------------
+# M130e: the signed store release (ADR 0058 D6)
+# ---------------------------------------------------------------------
+# Signs the release manifest with the engine repo's own publisher key
+# (release/publisher.seed) and emits everything the untrusted channel
+# carries: the signed stream record, release.go, and the channel drop
+# channel/doom/{release.go,DOOM.ELF,doom1.wad,LICENSE}.
+
+release: doom.elf
+	$(PYTHON) tools/release.py --selftest
+	$(PYTHON) tools/release.py
+
 test: doom.elf check-elf host-test
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: doom.elf host-test check-elf test clean
+.PHONY: doom.elf host-test check-elf release test clean
