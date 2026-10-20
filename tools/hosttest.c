@@ -35,6 +35,7 @@ void     mock_push_event(uint16_t kind, uint16_t flags, uint32_t arg0,
                          uint32_t arg1);
 uint64_t mock_audio_bytes(void);
 uint64_t mock_now_ms(void);
+int      mock_exit_status_get(void);
 
 extern pixel_t *DG_ScreenBuffer;
 extern int myargc;
@@ -288,6 +289,59 @@ static void leg_game(void)
     printf("leg5 TITLEPIC->demo melt: leveltime=%d\n", leveltime);
 }
 
+/* ---------------- leg 6: -playdemo <file> through demo end ---------- */
+/*
+ * Guest bug (store run 02/03, issue #2623): -playdemo names its demo by
+ * the lump the file adds; G_DeferedPlayDemo stored that name in
+ * defdemoname as a POINTER into D_DoomMain's demolumpname[9] — a local.
+ * doomgeneric's split D_DoomLoop returns from D_DoomMain after the first
+ * tick, so the pointer dangled into a dead frame: at demo end
+ * G_CheckDemoStatus -> W_ReleaseLumpName(defdemoname) handed
+ * W_GetNumForName whatever bytes later frames left there, I_Error'd, and
+ * the recursive I_Error (guard warned but re-ran the body) unwound the
+ * stack: fault far=stack_base-0x80 pc=I_Error+0x40 (stp q0,q1,[sp]).
+ *
+ * Drive the same path on the mock: a synthesized v109 demo, -playdemo,
+ * then ticks until the run-on-error/singledemo path exits cleanly via
+ * I_Quit -> exit(0). Pre-fix this leg died inside I_Error; post-fix the
+ * mock records exit status 0.
+ */
+static void leg_playdemo(void)
+{
+    extern char *defdemoname;
+
+    /* Minimal v109 (shorttics) demo: 13-byte header, sixteen no-op
+     * 4-byte commands, DEMOMARKER. */
+    unsigned char demo[13 + 4 * 16 + 1] = {
+        109, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    };
+    demo[sizeof(demo) - 1] = 0x80;   /* DEMOMARKER */
+
+    FILE *f = fopen("build/walk.lmp", "wb");
+    CHECK(f != NULL, "walk.lmp opens for write");
+    if (!f) return;
+    CHECK(fwrite(demo, 1, sizeof(demo), f) == sizeof(demo), "walk.lmp written");
+    CHECK(fclose(f) == 0, "walk.lmp flushed");
+
+    char *argv[] = { "doom", "-iwad", "assets/doom1.wad",
+                     "-playdemo", "build/walk.lmp", NULL };
+    doomgeneric_Create(5, argv);
+
+    CHECK(defdemoname != NULL && strcmp(defdemoname, "WALK") == 0,
+          "defdemoname is the added lump's name and stays valid");
+
+    /* demo end -> G_CheckDemoStatus -> W_ReleaseLumpName(defdemoname)
+     * -> singledemo -> I_Quit -> exit(0) -> the mock records status */
+    int i;
+    for (i = 0; i < 4000 && mock_exit_status_get() < 0; i++) {
+        doomgeneric_Tick();
+        DG_SleepMs(1);
+    }
+    CHECK(mock_exit_status_get() == 0, "walk.lmp ends in clean I_Quit");
+    printf("leg6 -playdemo demo end: exit=%d ticks=%d\n",
+           mock_exit_status_get(), i);
+}
+
 /* ---------------- entry --------------------------------------------- */
 
 int hosttest_main(int argc, char **argv)
@@ -300,6 +354,7 @@ int hosttest_main(int argc, char **argv)
     leg_titlepic();
     leg_sound();
     leg_game();
+    leg_playdemo();
 
     printf("hosttest: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
