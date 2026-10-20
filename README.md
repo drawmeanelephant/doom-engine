@@ -73,7 +73,7 @@ The engine is [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)
   `publisher.pub` (the `name=doom` keyring pin), and the channel drop
   `channel/doom/{release.go,DOOM.ELF,doom1.wad,LICENSE}`.
 - The manifest carries the ADR 0055 catalog consts, ADR 0054 D10's
-  `ReleaseCaps=file,window,audio,timer,memory`, and ADR 0058 D6's
+  `ReleaseCaps=file,window,audio,timer,memory,debug`, and ADR 0058 D6's
   `ReleaseAssetSHA256` pinning `doom1.wad` + `LICENSE` as channel
   members — the GPL text travels inside the signed channel, never into
   the system repo.

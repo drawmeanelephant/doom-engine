@@ -17,8 +17,14 @@ int64_t vl_write(int fd, const void *buf, uint64_t len)
 
 void vl_exit(int status)
 {
-    vl_sys(VL_SYS_EXIT, (uint64_t)(int64_t)status, 0, 0, 0, 0, 0);
-    for (;;) { /* the kernel never returns here */ }
+    int64_t r = vl_sys(VL_SYS_EXIT, (uint64_t)(int64_t)status, 0, 0, 0, 0, 0);
+    /* A non-negative return means the call was accepted yet control came
+     * back — only the host mock answers sys_exit that way; on the guest
+     * the kernel either terminates the task or returns -errno, in which
+     * case the honest thing is to spin rather than fall into whatever
+     * the caller's frame still holds. */
+    if (r >= 0) return;
+    for (;;) { }
 }
 
 int64_t vl_sleep_ticks(uint64_t ticks)

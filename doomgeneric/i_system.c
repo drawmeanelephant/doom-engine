@@ -259,9 +259,11 @@ void I_Quit (void)
 
 #if ORIGCODE
     SDL_Quit();
-
-    exit(0);
 #endif
+    // The ORIGCODE guard also dropped the exit: I_Quit returned into
+    // G_CheckDemoStatus and the game kept ticking headless instead of
+    // terminating (the -playdemo clean-exit path the store run needs).
+    exit(0);
 }
 
 #if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__)
@@ -365,10 +367,13 @@ void I_Error (char *error, ...)
 
     if (already_quitting)
     {
+        // A shutdown hook that errors again must not re-run the body:
+        // on this port the old #if ORIGCODE guard skipped the upstream
+        // exit, so a recursive I_Error unwound nothing and recursed
+        // until the stack died (observed: W_GetNumForName in a
+        // run_on_error hook -> stp q0,q1,[sp] under the stack base).
         fprintf(stderr, "Warning: recursive call to I_Error detected.\n");
-#if ORIGCODE
         exit(-1);
-#endif
     }
     else
     {
