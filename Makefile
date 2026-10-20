@@ -31,14 +31,28 @@ ENGINE_OBJS := $(ENGINE_SRC:%.c=$(BUILD)/guest/%.o)
 LIBC_SRC    := string.c ctype.c stdlib.c stdio.c misc.c
 LIBC_OBJS   := $(LIBC_SRC:%.c=$(BUILD)/guest/libc_%.o)
 GUEST_EXTRA := $(BUILD)/guest/doomgeneric_virelai.o \
+               $(BUILD)/guest/vl_sound.o \
                $(BUILD)/guest/sys.o \
                $(BUILD)/guest/sys_guest.o \
                $(BUILD)/guest/start.o
 
+# reserve-x18: the guest kernel's exception frame does not preserve x18
+# (platform-reserved under the VirelaiOS EL0 ABI, same as Darwin) — an IRQ
+# inside a loop that keeps a pointer there (observed: wipe_initMelt's melt
+# transform, `ldrh [x18, ...]`, far=0x8d641d7e) returns with a kernel
+# value in the register and the next deref dies. -ffixed-x18 does not
+# reach zig cc's freestanding subtarget; the target-feature does. Harmless
+# on the Darwin host legs, which already reserve x18.
 CFLAGS_COMMON := -O2 -ffreestanding -fno-stack-protector \
+    -Xclang -target-feature -Xclang +reserve-x18 \
     -I$(VIR)/include -I$(DGDIR) -I$(VIR) \
     -Wall -Wno-unused-parameter -Wno-sign-compare -Wno-pointer-sign \
     -Wno-macro-redefined
+
+# M130d: compile the sound modules in (DG_sound_module/DG_music_module
+# live in virelai/vl_sound.c; the SDL_mixer.h the engine includes under
+# FEATURE_SOUND is the virelai/include stub).
+CFLAGS_COMMON += -DFEATURE_SOUND
 
 # ---------------------------------------------------------------------
 # guest payload
@@ -59,6 +73,11 @@ $(BUILD)/guest/doomgeneric_virelai.o: $(VIR)/doomgeneric_virelai.c
 	$(ZIG) cc -target aarch64-freestanding-none -nostdlib -DVIRELAI_GUEST \
 	    $(CFLAGS_COMMON) -c $< -o $@
 
+$(BUILD)/guest/vl_sound.o: $(VIR)/vl_sound.c
+	@mkdir -p $(dir $@)
+	$(ZIG) cc -target aarch64-freestanding-none -nostdlib -DVIRELAI_GUEST \
+	    $(CFLAGS_COMMON) -c $< -o $@
+
 $(BUILD)/guest/sys.o: $(VIR)/sys.c
 	@mkdir -p $(dir $@)
 	$(ZIG) cc -target aarch64-freestanding-none -nostdlib -DVIRELAI_GUEST \
@@ -74,6 +93,7 @@ $(BUILD)/guest/start.o: $(VIR)/start.S
 
 $(BUILD)/DOOM.ELF: $(BUILD)/guest/start.o $(ENGINE_OBJS) $(LIBC_OBJS) \
                    $(BUILD)/guest/doomgeneric_virelai.o \
+                   $(BUILD)/guest/vl_sound.o \
                    $(BUILD)/guest/sys.o $(BUILD)/guest/sys_guest.o
 	$(ZIG) cc -target aarch64-freestanding-none -nostdlib \
 	    -Wl,-T,$(VIR)/virelai.ld -Wl,--gc-sections \
@@ -88,6 +108,7 @@ doom.elf: $(BUILD)/DOOM.ELF
 HOST_SRC   := $(ENGINE_SRC:%.c=$(BUILD)/host/%.o)
 HOST_LIBC  := $(LIBC_SRC:%.c=$(BUILD)/host/libc_%.o)
 HOST_EXTRA := $(BUILD)/host/doomgeneric_virelai.o \
+              $(BUILD)/host/vl_sound.o \
               $(BUILD)/host/sys.o \
               $(BUILD)/host/sys_mock.o \
               $(BUILD)/host/darwin_syscall.o \
@@ -118,6 +139,11 @@ $(BUILD)/host/doomgeneric_virelai.o: $(VIR)/doomgeneric_virelai.c
 	$(CC) -target arm64-apple-macos11 -nostdlib -ffreestanding \
 	    $(CFLAGS_COMMON) -c $< -o $@
 
+$(BUILD)/host/vl_sound.o: $(VIR)/vl_sound.c
+	@mkdir -p $(dir $@)
+	$(CC) -target arm64-apple-macos11 -nostdlib -ffreestanding \
+	    $(CFLAGS_COMMON) -c $< -o $@
+
 $(BUILD)/host/hosttest.o: tools/hosttest.c
 	@mkdir -p $(dir $@)
 	$(CC) -target arm64-apple-macos11 -nostdlib -ffreestanding \
@@ -129,6 +155,7 @@ $(BUILD)/host/darwin_syscall.o: $(VIR)/darwin_syscall.S
 
 $(BUILD)/hosttest: $(BUILD)/host/darwin_syscall.o $(HOST_SRC) \
                    $(HOST_LIBC) $(BUILD)/host/doomgeneric_virelai.o \
+                   $(BUILD)/host/vl_sound.o \
                    $(BUILD)/host/sys.o $(BUILD)/host/sys_mock.o \
                    $(BUILD)/host/hosttest.o
 	$(CC) -target arm64-apple-macos11 -nostdlib \
@@ -144,9 +171,21 @@ host-test: $(BUILD)/hosttest
 check-elf: $(BUILD)/DOOM.ELF
 	$(PYTHON) tools/check-elf.py $(BUILD)/DOOM.ELF
 
+# ---------------------------------------------------------------------
+# M130e: the signed store release (ADR 0058 D6)
+# ---------------------------------------------------------------------
+# Signs the release manifest with the engine repo's own publisher key
+# (release/publisher.seed) and emits everything the untrusted channel
+# carries: the signed stream record, release.go, and the channel drop
+# channel/doom/{release.go,DOOM.ELF,doom1.wad,LICENSE}.
+
+release: doom.elf
+	$(PYTHON) tools/release.py --selftest
+	$(PYTHON) tools/release.py
+
 test: doom.elf check-elf host-test
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: doom.elf host-test check-elf test clean
+.PHONY: doom.elf host-test check-elf release test clean

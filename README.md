@@ -26,8 +26,57 @@ The engine is [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric)
 - `assets/doom1.wad` — shareware DOOM 1.9 asset (see
   `assets/doom1.wad.NOTICE`), loaded by the host legs.
 
-Later cards (per the M130 arc): M130c playable slice, M130d audio,
-M130e/M130f store packaging.
+## What M130c adds (playable slice)
+
+- `vldoom:` serial markers (`boot`, `win`, `level`, `key`, `f=N t=T`) so
+  a host-side driver can anchor scripted input and framebuffer snapshots
+  without a display round trip.
+- Control mapping fixed for DOOM's abstract codes: space → `KEY_USE`,
+  any ctrl-modified stroke → `KEY_FIRE` (modifier presses never arrive
+  as HID usages on the guest channel), WASD as movement aliases.
+- Game loop runs at tic rate in-guest: `doomgeneric_Tick` presents one
+  frame per real tic; `f=N t=T` heartbeats carry `leveltime` so the gate
+  can see tics advancing.
+- `live-doom` spec leg (VirelaiOS side) execs `DOOM.ELF` off the virtio
+  share with `-iwad doom1.wad -warp 1 1`, holds `w` (forward) and sends
+  `space`/`ctrl-x`/`left` chords, and pixel-asserts the HUD + a scene
+  delta on raw scanout snapshots.
+
+## What M130d adds (sound)
+
+- `virelai/vl_sound.c` — the `DG_*` sound modules on `sys_audio`:
+  `DG_sound_module` decodes DMX PCM lumps (8-byte header + unsigned
+  8-bit mono), mixes the 8 channels in software with left/right
+  separation, resamples 11025 Hz source to the negotiated rate, and
+  streams bounded 4 KiB periods through the slot-43 bit-63 stream ABI
+  (`virelai/sys.h` `vl_audio_stream_*`). `DG_music_module` refuses by
+  name (`vldoom: music unsupported`) — no synthesizer exists here.
+- New markers: `vldoom: snd` (negotiated tuple + seat generation or the
+  named refusal), `vldoom: sfx` (one line per decoded lump bound to a
+  channel), `vldoom: pcm` (throttled submitted/nonzero/completed/underrun
+  counters from the seat's status call).
+- Host leg 4 drives the module against the mock stream and asserts
+  whole-period submissions.
+
+## What M130e adds (store packaging)
+
+- `tools/release.py` — signs and packages the `doom` release stream
+  under the engine repo's own publisher key (`release/publisher.seed`,
+  pinned `name=doom` in the consumer's `TRUSTED.TXT`). It reimplements
+  the FLINT release-stream wire facts (canonical atoms, the ops hash,
+  the Change signature preimage) and RFC 8032 Ed25519 in pure Python —
+  nothing from VirelaiOS is copied or linked; `--selftest` pins the
+  signing math against the RFC vector and the atom hashing against the
+  consumer's own recorded atom.
+- `make release` → `build/release/`: the signed `doom-stream.jsonl`
+  Change + `doom-stream.json` record, the `release.go` manifest,
+  `publisher.pub` (the `name=doom` keyring pin), and the channel drop
+  `channel/doom/{release.go,DOOM.ELF,doom1.wad,LICENSE}`.
+- The manifest carries the ADR 0055 catalog consts, ADR 0054 D10's
+  `ReleaseCaps=file,window,audio,timer,memory,debug`, and ADR 0058 D6's
+  `ReleaseAssetSHA256` pinning `doom1.wad` + `LICENSE` as channel
+  members — the GPL text travels inside the signed channel, never into
+  the system repo.
 
 ## Build
 
@@ -35,6 +84,7 @@ M130e/M130f store packaging.
 make doom.elf      # build/DOOM.ELF (zig cc required)
 make check-elf     # contract check
 make host-test     # host legs (clang + Darwin; builds build/hosttest)
+make release       # build/release/ — signed stream + channel drop
 make test          # everything
 ```
 
@@ -43,7 +93,8 @@ make test          # everything
 | path                     | contents                                        |
 |--------------------------|-------------------------------------------------|
 | `doomgeneric/`           | upstream engine, unmodified (GPLv2)             |
-| `virelai/`               | shim: `sys.*`, `sys_guest.S`, `doomgeneric_virelai.c`, `start.S`, `virelai.ld`, `libc/`, `include/` |
+| `virelai/`               | shim: `sys.*`, `sys_guest.S`, `doomgeneric_virelai.c`, `vl_sound.c`, `start.S`, `virelai.ld`, `libc/`, `include/` |
 | `virelai/sys_mock.c`, `virelai/darwin_syscall.S` | mock kernel for host legs — never in DOOM.ELF   |
-| `tools/`                 | `hosttest.c`, `check-elf.py`                    |
+| `tools/`                 | `hosttest.c`, `check-elf.py`, `release.py`      |
+| `release/`               | `publisher.seed` — the `name=doom` publisher key |
 | `assets/`                | WAD test assets + notices                       |

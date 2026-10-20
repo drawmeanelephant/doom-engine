@@ -1164,7 +1164,11 @@ void D_DoomMain (void)
 {
     int p;
     char file[256];
-    char demolumpname[9];
+    // doomgeneric's split D_DoomLoop returns from D_DoomMain after the
+    // first doomgeneric_Tick, while G_DeferedPlayDemo/G_TimeDemo keep a
+    // pointer to this buffer in defdemoname until G_CheckDemoStatus at
+    // demo end — a frame local is a dangling pointer by then.
+    static char demolumpname[9];
 #if ORIGCODE
     int numiwadlumps;
 #endif
