@@ -22,6 +22,7 @@
 #include "w_wad.h"
 #include "v_patch.h"
 #include "z_zone.h"
+#include "doomstat.h"
 
 /* mock test surface (sys_mock.c) */
 int      mock_window_count(void);
@@ -34,6 +35,7 @@ void     mock_push_event(uint16_t kind, uint16_t flags, uint32_t arg0,
                          uint32_t arg1);
 uint64_t mock_audio_bytes(void);
 uint64_t mock_now_ms(void);
+int      mock_exit_status_get(void);
 
 extern pixel_t *DG_ScreenBuffer;
 extern int myargc;
@@ -259,6 +261,87 @@ static void leg_sound(void)
     printf("leg4 sound module: OK\n");
 }
 
+/* ---------------- leg 5: live game — TITLEPIC -> demo melt ---------- */
+/*
+ * Guest bug: DOOM.ELF took a data abort inside wipe_initMelt's melt
+ * transform during the TITLEPIC->demo1 wipe (the -warp path never
+ * runs the melt). Drive the real game loop through the transition on
+ * the mock: TITLEPIC pages for 170 tics (~5 s), demo1 spawns, and the
+ * wipe melts between the two captured screens.
+ */
+static void leg_game(void)
+{
+    extern int leveltime;
+    extern gamestate_t gamestate;
+
+    char *argv[] = { "doom", "-iwad", "assets/doom1.wad", NULL };
+    doomgeneric_Create(3, argv);
+
+    int saw_level = 0;
+    /* 2000 ticks x ~5 ms of work+sleep comfortably clears 170 tics of
+     * TITLEPIC, the ~2 s melt, and the first demo tics. */
+    for (int i = 0; i < 2000 && !saw_level; i++) {
+        doomgeneric_Tick();
+        DG_SleepMs(1);
+        if (gamestate == GS_LEVEL && leveltime > 0) saw_level = 1;
+    }
+    CHECK(saw_level, "demo1 reached GS_LEVEL past the melt");
+    printf("leg5 TITLEPIC->demo melt: leveltime=%d\n", leveltime);
+}
+
+/* ---------------- leg 6: -playdemo <file> through demo end ---------- */
+/*
+ * Guest bug (store run 02/03, issue #2623): -playdemo names its demo by
+ * the lump the file adds; G_DeferedPlayDemo stored that name in
+ * defdemoname as a POINTER into D_DoomMain's demolumpname[9] — a local.
+ * doomgeneric's split D_DoomLoop returns from D_DoomMain after the first
+ * tick, so the pointer dangled into a dead frame: at demo end
+ * G_CheckDemoStatus -> W_ReleaseLumpName(defdemoname) handed
+ * W_GetNumForName whatever bytes later frames left there, I_Error'd, and
+ * the recursive I_Error (guard warned but re-ran the body) unwound the
+ * stack: fault far=stack_base-0x80 pc=I_Error+0x40 (stp q0,q1,[sp]).
+ *
+ * Drive the same path on the mock: a synthesized v109 demo, -playdemo,
+ * then ticks until the run-on-error/singledemo path exits cleanly via
+ * I_Quit -> exit(0). Pre-fix this leg died inside I_Error; post-fix the
+ * mock records exit status 0.
+ */
+static void leg_playdemo(void)
+{
+    extern char *defdemoname;
+
+    /* Minimal v109 (shorttics) demo: 13-byte header, sixteen no-op
+     * 4-byte commands, DEMOMARKER. */
+    unsigned char demo[13 + 4 * 16 + 1] = {
+        109, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    };
+    demo[sizeof(demo) - 1] = 0x80;   /* DEMOMARKER */
+
+    FILE *f = fopen("build/walk.lmp", "wb");
+    CHECK(f != NULL, "walk.lmp opens for write");
+    if (!f) return;
+    CHECK(fwrite(demo, 1, sizeof(demo), f) == sizeof(demo), "walk.lmp written");
+    CHECK(fclose(f) == 0, "walk.lmp flushed");
+
+    char *argv[] = { "doom", "-iwad", "assets/doom1.wad",
+                     "-playdemo", "build/walk.lmp", NULL };
+    doomgeneric_Create(5, argv);
+
+    CHECK(defdemoname != NULL && strcmp(defdemoname, "WALK") == 0,
+          "defdemoname is the added lump's name and stays valid");
+
+    /* demo end -> G_CheckDemoStatus -> W_ReleaseLumpName(defdemoname)
+     * -> singledemo -> I_Quit -> exit(0) -> the mock records status */
+    int i;
+    for (i = 0; i < 4000 && mock_exit_status_get() < 0; i++) {
+        doomgeneric_Tick();
+        DG_SleepMs(1);
+    }
+    CHECK(mock_exit_status_get() == 0, "walk.lmp ends in clean I_Quit");
+    printf("leg6 -playdemo demo end: exit=%d ticks=%d\n",
+           mock_exit_status_get(), i);
+}
+
 /* ---------------- entry --------------------------------------------- */
 
 int hosttest_main(int argc, char **argv)
@@ -270,6 +353,8 @@ int hosttest_main(int argc, char **argv)
     leg_wad();
     leg_titlepic();
     leg_sound();
+    leg_game();
+    leg_playdemo();
 
     printf("hosttest: %d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;

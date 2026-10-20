@@ -324,7 +324,7 @@ LICENSE_MEMBER = "LICENSE"
 MANIFEST_ROW = (
     "DOOM.ELF | DOOM | d | dock=false | v=2 | "
     "argv=-iwad /host/DROP/doom/" + WAD_MEMBER + " | "
-    "caps=file,window,audio,timer,memory"
+    "caps=file,window,audio,timer,memory,debug"
 )
 
 SUMMARY = "DOOM (shareware episode) for VirelaiOS"
@@ -335,7 +335,7 @@ DESCRIPTION = (
     "member and the app opens it in place."
 )
 CATEGORY = "game"
-CAPS = "file,window,audio,timer,memory"
+CAPS = "file,window,audio,timer,memory,debug"
 
 
 def sha256_file(path):
